@@ -1,0 +1,32 @@
+[package]
+name = "auth-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+argon2 = "0.6.0"
+async-trait = "0.1.92"
+axum = { version = "0.8.9", features = ["macros"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+dotenvy = "0.15.7"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "uuid", "chrono", "migrate"] }
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["full"] }
+tower-http = { version = "0.7.1", features = ["trace"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+utoipa = { version = "6.0.0", features = ["axum_extras", "uuid", "chrono"] }
+utoipa-axum = "0.3.0"
+utoipa-swagger-ui = { version = "10.0.1", features = ["axum"] }
+uuid = { version = "1.28.0", features = ["v4", "v7", "serde"] }
+webauthn-rs = "0.5.5"
+
+# Unoptimized Argon2 takes seconds per hash; keep it fast in dev builds and tests.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[dev-dependencies]
+webauthn-authenticator-rs = { version = "0.5.5", features = ["softpasskey"] }

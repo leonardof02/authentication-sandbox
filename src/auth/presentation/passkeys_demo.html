@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Passkeys · Auth Server</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    section { border: 1px solid #8884; border-radius: .5rem; padding: 1rem; margin-bottom: 1rem; }
+    h2 { margin-top: 0; font-size: 1.1rem; }
+    input { width: 100%; box-sizing: border-box; padding: .5rem; margin-bottom: .5rem; font: inherit; }
+    button { padding: .5rem 1rem; font: inherit; cursor: pointer; margin-right: .5rem; }
+    pre { background: #8881; padding: 1rem; border-radius: .5rem; white-space: pre-wrap; word-break: break-all; }
+    .hint { font-size: .9rem; opacity: .75; }
+  </style>
+</head>
+<body>
+  <h1>Passkeys</h1>
+  <p class="hint">Open it at <code>http://localhost:3000</code>: passkeys are bound to the domain
+    (<code>WEBAUTHN_RP_ID</code>) and won't work from <code>127.0.0.1</code>.</p>
+
+  <section>
+    <h2>1. Sign in with password</h2>
+    <input id="email" type="email" placeholder="email" autocomplete="username webauthn">
+    <input id="password" type="password" placeholder="password (at least 8 characters)">
+    <button id="register">Sign up</button>
+    <button id="login">Sign in</button>
+  </section>
+
+  <section>
+    <h2>2. Link a passkey</h2>
+    <p class="hint">Requires being signed in (step 1 or 3).</p>
+    <button id="link">Link passkey</button>
+  </section>
+
+  <section>
+    <h2>3. Sign in with passkey</h2>
+    <p class="hint">Uses the email from step 1, no password needed.</p>
+    <button id="passkey-login">Sign in with passkey</button>
+  </section>
+
+  <pre id="log">Not signed in.</pre>
+
+<script>
+let accessToken = null;
+const $ = (id) => document.getElementById(id);
+const log = (title, data) => { $("log").textContent = title + (data ? "\n" + JSON.stringify(data, null, 2) : ""); };
+
+async function api(path, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const res = await fetch(path, { method: "POST", headers, body: JSON.stringify(body ?? {}) });
+  const data = await res.json();
+  if (!res.ok) throw Object.assign(new Error(data.message), { data });
+  return data;
+}
+
+// WebAuthn uses ArrayBuffers while the server sends base64url strings.
+const fromB64url = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "=")), (c) => c.charCodeAt(0));
+const toB64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+function creationOptions({ publicKey }) {
+  return {
+    ...publicKey,
+    challenge: fromB64url(publicKey.challenge),
+    user: { ...publicKey.user, id: fromB64url(publicKey.user.id) },
+    excludeCredentials: (publicKey.excludeCredentials ?? []).map((c) => ({ ...c, id: fromB64url(c.id) })),
+  };
+}
+
+function requestOptions({ publicKey }) {
+  return {
+    ...publicKey,
+    challenge: fromB64url(publicKey.challenge),
+    allowCredentials: (publicKey.allowCredentials ?? []).map((c) => ({ ...c, id: fromB64url(c.id) })),
+  };
+}
+
+function credentialToJson(cred) {
+  const r = cred.response;
+  const response = { clientDataJSON: toB64url(r.clientDataJSON) };
+  if (r.attestationObject) {
+    response.attestationObject = toB64url(r.attestationObject);
+    response.transports = r.getTransports?.() ?? [];
+  } else {
+    response.authenticatorData = toB64url(r.authenticatorData);
+    response.signature = toB64url(r.signature);
+    response.userHandle = r.userHandle ? toB64url(r.userHandle) : null;
+  }
+  return { id: cred.id, rawId: toB64url(cred.rawId), type: cred.type, response, extensions: cred.getClientExtensionResults() };
+}
+
+async function run(title, fn) {
+  try { log(title + "…"); log(title + " ✔", await fn()); }
+  catch (err) { log(title + " ✘ " + err.message, err.data); }
+}
+
+const credentials = () => ({ email: $("email").value, password: $("password").value });
+
+$("register").onclick = () => run("Sign up", () => api("/auth/register", credentials()));
+
+$("login").onclick = () => run("Password sign-in", async () => {
+  const token = await api("/auth/login", credentials());
+  accessToken = token.access_token;
+  return token;
+});
+
+$("link").onclick = () => run("Link passkey", async () => {
+  const { ceremony_id, options } = await api("/auth/passkeys/register/start");
+  const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
+  return api("/auth/passkeys/register/finish", { ceremony_id, credential: credentialToJson(cred) });
+});
+
+$("passkey-login").onclick = () => run("Passkey sign-in", async () => {
+  const { ceremony_id, options } = await api("/auth/passkeys/login/start", { email: $("email").value });
+  const cred = await navigator.credentials.get({ publicKey: requestOptions(options) });
+  const token = await api("/auth/passkeys/login/finish", { ceremony_id, credential: credentialToJson(cred) });
+  accessToken = token.access_token;
+  return token;
+});
+</script>
+</body>
+</html>
